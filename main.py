@@ -18,11 +18,19 @@ model = SentenceTransformer('sentence-transformers/distiluse-base-multilingual-c
 class User(BaseModel):
     Id: str
     DescribeUser: str
-    Skills: str
+    Skills: list[str]
+    Interests: list[str]
+    Hobbies: list[str]
+
+    def getText(self) ->str:
+        return ("О себе: " + self.DescribeUser + 
+        ". Мои навыки: " + ", ".join(self.Skills) + 
+        ". Мои интересы: " + ", ".join(self.Interests) +
+        ". Мои Хобби: " + ", ".join(self.Hobbies))
+    
 
 class MyRequest(BaseModel):
     UserId: str
-    User: User
     NameRequest: str
     TextRequest: str
     
@@ -54,14 +62,24 @@ def cosine_similary(A, B):
     norm_B = np.linalg.norm(B)
     return dot_product / (norm_A * norm_B)
 
-#@app.post("/predict")
-#async def predict(request_body: RequestBody):
-#    request = model.encode(request_body.Request.getText())
-#    request_scores = [] #сходство по 
-#    user_scores = []
-#
-#    for r in request_body.Requests:
-#        r_embedding = model.encode(r)
+@app.post("/predict")
+async def predict(request_body: RequestBody):
+    request = model.encode(request_body.Request.getText())
+    requests_dict = {request.UserId: request for request in request_body.Requests}
+    #пользователи без запросов
+    user_dict = {user.Id: user for user in request_body.Users 
+                 if user.Id not in requests_dict.keys()}
+
+    request_scores = {
+        "Id": [],
+        "Score": [] } #сходство по запросам (ключ - id пользователя, значение - коэф. схожести)
+    user_scores = {
+        "Id": [],
+        "Score": []
+    } #сходство по профилям (без запросов)
+
+    for key in requests_dict.keys():
+        request_scores[key] = 
 
 
 
