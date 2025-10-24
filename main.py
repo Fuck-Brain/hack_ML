@@ -1,6 +1,9 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.responses import JSONResponse
-from transformers import (pipline)
+from transformers import pipline
+from sentence_transformers import SentenceTransformer
+from pydantic import BaseModel
+import numpy as np
 
 app = FastAPI()
 
@@ -10,12 +13,56 @@ labels = ["человек, который ищёт друзей или един�
           "человек, который ищет работу или проект",
           "человек, который хочет получить услугу"]
 
-@app.post("/")
-async def classification(request: Request):
-    data = await request.json()
+model = SentenceTransformer('sentence-transformers/distiluse-base-multilingual-cased-v2')
+
+class User(BaseModel):
+    Id: str
+    DescribeUser: str
+    Skills: str
+
+class MyRequest(BaseModel):
+    UserId: str
+    User: User
+    NameRequest: str
+    TextRequest: str
     
+    def getText(self) -> str:
+        if (self.NameRequest.endswith('.')):
+            return self.NameRequest + ' ' + self.TextRequest
+        else: 
+            return self.NameRequest + '. ' + self.TextRequest
+
+class RequestBody(BaseModel):
+    Request: MyRequest
+    Users: list[User]
+    Requests: list[MyRequest]
+
+
+@app.post("/classifire")
+async def classification(request: MyRequest):
+    data = request.getText()
+
     classifier = pipline("zero-shot-classification",
                       model="joeddav/xlm-roberta-large-xnli")
     scores = classifier(data, labels)
     result = scores["labels"][0]
     return JSONResponse(content=result)
+
+def cosine_similary(A, B):
+    dot_product = np.dot(A, B)
+    norm_A = np.linalg.norm(A)
+    norm_B = np.linalg.norm(B)
+    return dot_product / (norm_A * norm_B)
+
+#@app.post("/predict")
+#async def predict(request_body: RequestBody):
+#    request = model.encode(request_body.Request.getText())
+#    request_scores = [] #сходство по 
+#    user_scores = []
+#
+#    for r in request_body.Requests:
+#        r_embedding = model.encode(r)
+
+
+
+    
