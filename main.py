@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
-from transformers import pipline
+from transformers import pipeline
 from sentence_transformers import SentenceTransformer
 from pydantic import BaseModel
 import numpy as np
@@ -49,23 +49,23 @@ class RequestBody(BaseModel):
     Requests: list[MyRequest]
 
 
-@app.post("/classifire")
+@app.post("/classifier")
 async def classification(request: MyRequest):
     data = request.getText()
 
-    classifier = pipline("zero-shot-classification",
+    classifier = pipeline("zero-shot-classification",
                       model="joeddav/xlm-roberta-large-xnli")
     scores = classifier(data, labels)
     result = scores["labels"][0]
     return JSONResponse(content=result)
 
-def cosine_similary(A, B):
+def cosine_similarity(A: np.ndarray, B: np.ndarray) -> float:
     dot_product = np.dot(A, B)
     norm_A = np.linalg.norm(A)
     norm_B = np.linalg.norm(B)
     return dot_product / (norm_A * norm_B)
 
-def check_label(main_label, label):
+def check_label(main_label: str, label: str) -> bool:
     #1:работодатель - работник 
     #2:продавец - покупатель 
     #3:работник - работодатель
@@ -74,7 +74,6 @@ def check_label(main_label, label):
             (main_label == labels[2] and label == labels[4]) or 
             (main_label == labels[3] and label == labels[1]) or 
             (main_label == labels[4] and label == labels[2]))   
-
 
 @app.post("/predict")
 async def predict(request_body: RequestBody):
@@ -91,12 +90,12 @@ async def predict(request_body: RequestBody):
         user_dict.pop(r.UserId, None)
         
         if check_label(main_label, r.Label): 
-            score = cosine_similary(model.encode(r.getText()), request)
+            score = cosine_similarity(model.encode(r.getText()), request)
             if (r.UserId in request_scores.keys()):
                 request_scores[r.UserId] = max(request_scores[r.UserId], score)
             else: request_scores[r.UserId] = score
         elif (main_label != labels[3]): 
-            score = cosine_similary(model.encode(r.User.getText()), request)
+            score = cosine_similarity(model.encode(r.User.getText()), request)
             if (r.UserId in user_scores.keys()):
                 user_scores[r.UserId] = max(user_scores[r.UserId], score)
             else:
@@ -104,13 +103,13 @@ async def predict(request_body: RequestBody):
 
     #Проверяются оставшиеся поьзователи без запросов 
     for key in user_dict.keys():
-        score = cosine_similary(model.encode(user_dict[key].getText()), request)
+        score = cosine_similarity(model.encode(user_dict[key].getText()), request)
         user_scores[key] = score
 
-    request_scores = dict(sorted(request_scores.items(), key=itemgetter(1)))
-    user_scores = dict(sorted(user_scores.items(), key=itemgetter(1)))
+    request_scores = dict(sorted(request_scores.items(), key=itemgetter(1), reverse=True))
+    user_scores = dict(sorted(user_scores.items(), key=itemgetter(1), reverse=True))
 
-    return JSONResponse(content = request_scores | user_scores)
+    return JSONResponse(content = {**request_scores , **user_scores})
 
 
 
