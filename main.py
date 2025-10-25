@@ -6,8 +6,7 @@ from sentence_transformers import SentenceTransformer
 from pydantic import BaseModel
 import numpy as np
 from operator import itemgetter
-from collections import Counter
-from rapidfuzz.fuzz import partial_ratio
+import json
 
 app = FastAPI()
 
@@ -21,6 +20,11 @@ model = SentenceTransformer('sentence-transformers/distiluse-base-multilingual-c
 classifier = pipeline("zero-shot-classification",
                       model="MoritzLaurer/mDeBERTa-v3-base-mnli-xnli")
 
+
+with open("themes.json", "r", encoding="utf-8") as f:
+    themes = json.load(f)
+
+
 class User(BaseModel):
     Id: str
     DescribeUser: str
@@ -33,7 +37,6 @@ class User(BaseModel):
         ". Мои навыки: " + self.Skills + 
         ". Мои интересы: " + self.Interests +
         ". Мои Хобби: " + self.Hobbies)
-    
 
 class MyRequest(BaseModel):
     UserId: str
@@ -115,62 +118,21 @@ async def predict(request_body: RequestBody):
 
     return JSONResponse(content = {**request_scores , **user_scores})
 
-
-def count_words(request: List[str]):
-    terms = []
-    # прведение к нижнему регистру
+def count_theme(request: List[str]):
+    count_theme = {}
     for s in request:
-        for word in s.split(','):
-            terms.append(word.lower().strip())
+        for skill in s.split(','):
+            result = classifier(skill, candidate_labels=labels)
+            theme = result["labels"][0].split(":")[0]
+            count_theme[theme] = count_theme.get(theme, 0) + 1
 
-    freq = Counter(terms)
-
-    emb = model.encode(terms)
-
-    # граф близости с гвардами
-    n = len(terms)
-    edges = [[] for _ in range(n)]
-    tau_sem = 0.7
-    tau_str = 70  # RapidFuzz 0..100
-
-    for i in range(n):
-        for j in range(i+1, n):
-            sem = float(np.dot(emb[i], emb[j]))
-            if sem >= tau_sem:
-                if partial_ratio(terms[i], terms[j]) >= tau_str:
-                    edges[i].append(j)
-                    edges[j].append(i)
-
-    # компоненты связности (объединяем леммы)
-    visited = [False]*n
-    clusters = []
-    for i in range(n):
-        if visited[i]: continue
-        stack = [i]; comp = []
-        visited[i] = True
-        while stack:
-            k = stack.pop()
-            comp.append(k)
-            for nb in edges[k]:
-                if not visited[nb]:
-                    visited[nb] = True
-                    stack.append(nb)
-        clusters.append(comp)
-        
-    count_words = []
-    for comp in clusters:
-        aliases = [terms[i] for i in comp]
-        total = sum(freq[a] for a in aliases)
-        canonical = max(aliases, key=lambda a: freq[a])  # канон = самый частотный
-        count_words.append({"interest": canonical, "count": total})
-    
-    count_words.sort(key = lambda x: x["count"], reverse=True)
-    return count_words
+    count_theme = dict(sorted(count_theme.items(), key=itemgetter(1), reverse=True))
+    return count_theme
 
 #упорядачивает навыки(хобби/интересы) по популярности среди пользователей (поиск по анкетам)
 @app.post("/statistic/most_popular")
 async def most_popular(request: List[str]):
-    return JSONResponse(content = count_words(request))
+    return JSONResponse(content = count_theme(request))
 
 class RequestBody1(BaseModel):
     Skills: List[str]
@@ -179,7 +141,7 @@ class RequestBody1(BaseModel):
 #упорядачивает навыки(хобби/интересы) по востребованности в запросах (с учётом их меток)
 @app.post("/statistic/requests_frequency")
 async def requests_frequency(request: RequestBody1):
-    labels = ["Здесь требуется знание (умение/навык) " + item["interest"] for item in count_words(request.Skills)]
+    labels = ["Здесь требуется знания (умения/навыки) в сфере" + theme for theme in count_theme(request.Skills).keys()]
     skills_count = {} #dict: skill - count
     accuracy = 0.7
 
@@ -194,6 +156,7 @@ async def requests_frequency(request: RequestBody1):
                 skill = result["labels"][i].split(' ')[-1]
                 skills_count[skill] = skills_count.get(skill, 0) + 1
 
+    skills_count = dict(sorted(skills_count.items(), key=itemgetter(1), reverse=True))
     return JSONResponse(content=skills_count)
 
 
