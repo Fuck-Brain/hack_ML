@@ -6,9 +6,8 @@ from pydantic import BaseModel
 import numpy as np
 from operator import itemgetter
 import  re
-from collections import defaultdict, Counter
+from collections import Counter
 from rapidfuzz.fuzz import partial_ratio
-import spacy
 
 app = FastAPI()
 
@@ -19,6 +18,8 @@ labels = ["человек, который ищёт друзей или един�
           "человек, который хочет получить услугу"]
 
 model = SentenceTransformer('sentence-transformers/distiluse-base-multilingual-cased-v2')
+classifier = pipeline("zero-shot-classification",
+                      model="joeddav/xlm-roberta-large-xnli")
 
 class User(BaseModel):
     Id: str
@@ -56,8 +57,6 @@ class RequestBody(BaseModel):
 async def classification(request: MyRequest):
     data = request.getText()
 
-    classifier = pipeline("zero-shot-classification",
-                      model="joeddav/xlm-roberta-large-xnli")
     scores = classifier(data, labels)
     result = scores["labels"][0]
     return JSONResponse(content=result)
@@ -115,27 +114,18 @@ async def predict(request_body: RequestBody):
     return JSONResponse(content = {**request_scores , **user_scores})
 
 
-def normalize_term(t: str) -> str:
-    t = t.lower().strip()
-    t = re.sub(r"[-_]+", " ", t)
-    t = re.sub(r"\s+", " ", t)
-    return t
-
-@app.post("/statistic/most_popular")
-async def most_popular(request: list[str]):
-    
+def count_words(request: list[str]):
     terms = []
-    # 1) нормализация и уникализация
+    # прведение к нижнему регистру
     for str in request:
         for word in str.split(','):
-            terms.append(normalize_term(word))
+            terms.append(word.lower().strip())
 
     freq = Counter(terms)
 
-    # 2) эмбеддинги
     emb = model.encode(terms)
 
-    # 3) граф близости с гвардами
+    # граф близости с гвардами
     n = len(terms)
     edges = [[] for _ in range(n)]
     tau_sem = 0.7
@@ -149,7 +139,7 @@ async def most_popular(request: list[str]):
                     edges[i].append(j)
                     edges[j].append(i)
 
-    # 4) компоненты связности (объединяем леммы)
+    # компоненты связности (объединяем леммы)
     visited = [False]*n
     clusters = []
     for i in range(n):
@@ -176,8 +166,32 @@ async def most_popular(request: list[str]):
     interests.sort(key = lambda x: x["count"], reverse=True)
     return interests
 
+#упорядачивает навыки(хобби/интересы) по популярности среди пользователей (поиск по анкетам)
+@app.post("/statistic/most_popular")
+async def most_popular(request: list[str]):
+    return JSONResponse(content = count_words(request))
 
-#@app.post("/statistic")
+#упорядачивает навыки(хобби/интересы) по востребованности в запросах (с учётом их меток)
+@app.post("/statistic/requests_frequency")
+async def requests_frequency(skills: list[str], requests: list[MyRequest]):
+    labels = ["Здесь требуется знание (умение/навык) " + item["interest"] for item in count_words(skills)]
+    skills_count = {} #dict: skill - count
+    accuracy = 0.7
+
+    filtered_requests = [req for req in requests 
+                         if (req.Label = labels[0] or 
+                             req.Label = labels[1]) or
+                             req.Label = labels[4]]
+
+    for request in filtered_requests:
+        text = request.getText()
+        result = classifier(text, candidate_labels=labels, multi_label=True)
+        for i in range(len(skills)):
+            if (result["scores"][i] >= accuracy):
+                skill = result["labels"][i].split(' ')[-1]
+                skills_count[skill] += 1
+
+    return JSONResponse(content=skills_count)
 
 
 
