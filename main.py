@@ -24,6 +24,13 @@ classifier = pipeline("zero-shot-classification",
 with open("themes.json", "r", encoding="utf-8") as f:
     themes = json.load(f)
 
+themes_emb = model.encode(
+        themes,
+        convert_to_numpy=True,
+        normalize_embeddings=True,   
+        batch_size=128,
+        show_progress_bar=False
+    ) #[model.encode(theme) for theme in themes]
 
 class User(BaseModel):
     Id: str
@@ -120,13 +127,27 @@ async def predict(request_body: RequestBody):
 
 def count_theme(request: List[str]):
     count_theme = {}
+
+    skills = []
     for s in request:
         for skill in s.split(','):
-            result = classifier(skill, candidate_labels=labels)
-            theme = result["labels"][0].split(":")[0]
-            count_theme[theme] = count_theme.get(theme, 0) + 1
+            skills.append(skill)
 
-    count_theme = dict(sorted(count_theme.items(), key=itemgetter(1), reverse=True))
+    skill_emb = model.encode(
+        skills,
+        convert_to_numpy=True,
+        normalize_embeddings=True,
+        batch_size=256,
+        show_progress_bar=False
+    )
+    similarity = skill_emb @ themes_emb.T
+    idx = np.argmax(similarity, axis=1)
+
+    counts = np.bincount(idx, minlength=themes_emb.shape[0])
+
+    # Формируем ответ, отсортировав по убыванию
+    order = np.argsort(-counts)
+    count_theme = {themes[i].split(":")[0]: int(counts[i]) for i in order if counts[i] > 0}
     return count_theme
 
 #упорядачивает навыки(хобби/интересы) по популярности среди пользователей (поиск по анкетам)
@@ -141,22 +162,27 @@ class RequestBody1(BaseModel):
 #упорядачивает навыки(хобби/интересы) по востребованности в запросах (с учётом их меток)
 @app.post("/statistic/requests_frequency")
 async def requests_frequency(request: RequestBody1):
-    labels = ["Здесь требуется знания (умения/навыки) в сфере" + theme for theme in count_theme(request.Skills).keys()]
-    skills_count = {} #dict: skill - count
-    accuracy = 0.7
+    accuracy = 0.35
 
     filtered_requests = [req for req in request.Requests 
                          if req.Label in {labels[0], labels[1], labels[4]}]
+    
+    print(len(filtered_requests))
+    
+    texts = [request.getText() for request in filtered_requests]
+    
+    texts_emb = model.encode(texts, 
+                             convert_to_numpy=True, 
+                             normalize_embeddings=True, 
+                             batch_size=128)
 
-    for request in filtered_requests:
-        text = request.getText()
-        result = classifier(text, candidate_labels=labels, multi_label=True)
-        for i in range(len(request.Skills)):
-            if (result["scores"][i] >= accuracy):
-                skill = result["labels"][i].split(' ')[-1]
-                skills_count[skill] = skills_count.get(skill, 0) + 1
+    similarity = texts_emb @ themes_emb.T    
+        
+    counts = (similarity >= accuracy).sum(axis=0)  
 
-    skills_count = dict(sorted(skills_count.items(), key=itemgetter(1), reverse=True))
+    order = np.argsort(-counts)
+    skills_count = {themes[i].split(":")[0]: int(counts[i]) for i in order if counts[i] > 0}
+
     return JSONResponse(content=skills_count)
 
 
