@@ -1,10 +1,14 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from transformers import pipeline
 from sentence_transformers import SentenceTransformer
 from pydantic import BaseModel
 import numpy as np
 from operator import itemgetter
+import  re
+from collections import defaultdict, Counter
+from rapidfuzz.fuzz import partial_ratio
+import spacy
 
 app = FastAPI()
 
@@ -19,20 +23,19 @@ model = SentenceTransformer('sentence-transformers/distiluse-base-multilingual-c
 class User(BaseModel):
     Id: str
     DescribeUser: str
-    Skills: list[str]
-    Interests: list[str]
-    Hobbies: list[str]
+    Skills: str
+    Interests: str
+    Hobbies: str
 
     def getText(self) ->str:
         return ("О себе: " + self.DescribeUser + 
-        ". Мои навыки: " + ", ".join(self.Skills) + 
-        ". Мои интересы: " + ", ".join(self.Interests) +
-        ". Мои Хобби: " + ", ".join(self.Hobbies))
+        ". Мои навыки: " + self.Skills + 
+        ". Мои интересы: " + self.Interests +
+        ". Мои Хобби: " + self.Hobbies)
     
 
 class MyRequest(BaseModel):
     UserId: str
-    User: User
     NameRequest: str
     TextRequest: str
     Label: str
@@ -110,6 +113,72 @@ async def predict(request_body: RequestBody):
     user_scores = dict(sorted(user_scores.items(), key=itemgetter(1), reverse=True))
 
     return JSONResponse(content = {**request_scores , **user_scores})
+
+
+def normalize_term(t: str) -> str:
+    t = t.lower().strip()
+    t = re.sub(r"[-_]+", " ", t)
+    t = re.sub(r"\s+", " ", t)
+    return t
+
+@app.post("/statistic/most_popular")
+async def most_popular(request: list[str]):
+    
+    terms = []
+    # 1) нормализация и уникализация
+    for str in request:
+        for word in str.split(','):
+            terms.append(normalize_term(word))
+
+    freq = Counter(terms)
+
+    # 2) эмбеддинги
+    emb = model.encode(terms)
+
+    # 3) граф близости с гвардами
+    n = len(terms)
+    edges = [[] for _ in range(n)]
+    tau_sem = 0.7
+    tau_str = 70  # RapidFuzz 0..100
+
+    for i in range(n):
+        for j in range(i+1, n):
+            sem = float(np.dot(emb[i], emb[j]))
+            if sem >= tau_sem:
+                if partial_ratio(terms[i], terms[j]) >= tau_str:
+                    edges[i].append(j)
+                    edges[j].append(i)
+
+    # 4) компоненты связности (объединяем леммы)
+    visited = [False]*n
+    clusters = []
+    for i in range(n):
+        if visited[i]: continue
+        stack = [i]; comp = []
+        visited[i] = True
+        while stack:
+            k = stack.pop()
+            comp.append(k)
+            for nb in edges[k]:
+                if not visited[nb]:
+                    visited[nb] = True
+                    stack.append(nb)
+        clusters.append(comp)
+        
+    count_words = []
+    for comp in clusters:
+        aliases = [terms[i] for i in comp]
+        total = sum(freq[a] for a in aliases)
+        canonical = max(aliases, key=lambda a: freq[a])  # канон = самый частотный
+        count_words.append({"interest": canonical, "count": total})
+    
+    interests = count_words(request)
+    interests.sort(key = lambda x: x["count"], reverse=True)
+    return interests
+
+
+#@app.post("/statistic")
+
 
 
 
