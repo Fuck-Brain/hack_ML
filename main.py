@@ -5,7 +5,6 @@ from sentence_transformers import SentenceTransformer
 from pydantic import BaseModel
 import numpy as np
 from operator import itemgetter
-import  re
 from collections import Counter
 from rapidfuzz.fuzz import partial_ratio
 
@@ -51,7 +50,6 @@ class RequestBody(BaseModel):
     Request: MyRequest
     Users: list[User]
     Requests: list[MyRequest]
-
 
 @app.post("/classifier")
 async def classification(request: MyRequest):
@@ -117,8 +115,8 @@ async def predict(request_body: RequestBody):
 def count_words(request: list[str]):
     terms = []
     # прведение к нижнему регистру
-    for str in request:
-        for word in str.split(','):
+    for s in request:
+        for word in s.split(','):
             terms.append(word.lower().strip())
 
     freq = Counter(terms)
@@ -162,34 +160,35 @@ def count_words(request: list[str]):
         canonical = max(aliases, key=lambda a: freq[a])  # канон = самый частотный
         count_words.append({"interest": canonical, "count": total})
     
-    interests = count_words(request)
-    interests.sort(key = lambda x: x["count"], reverse=True)
-    return interests
+    count_words.sort(key = lambda x: x["count"], reverse=True)
+    return count_words
 
 #упорядачивает навыки(хобби/интересы) по популярности среди пользователей (поиск по анкетам)
 @app.post("/statistic/most_popular")
 async def most_popular(request: list[str]):
     return JSONResponse(content = count_words(request))
 
+class RequestBody1(BaseModel):
+    Skills: list[str]
+    Requests: list[MyRequest]
+
 #упорядачивает навыки(хобби/интересы) по востребованности в запросах (с учётом их меток)
 @app.post("/statistic/requests_frequency")
-async def requests_frequency(skills: list[str], requests: list[MyRequest]):
-    labels = ["Здесь требуется знание (умение/навык) " + item["interest"] for item in count_words(skills)]
+async def requests_frequency(request: RequestBody1):
+    labels = ["Здесь требуется знание (умение/навык) " + item["interest"] for item in count_words(request.Skills)]
     skills_count = {} #dict: skill - count
     accuracy = 0.7
 
-    filtered_requests = [req for req in requests 
-                         if (req.Label = labels[0] or 
-                             req.Label = labels[1]) or
-                             req.Label = labels[4]]
+    filtered_requests = [req for req in request.Requests 
+                         if req.Label in {labels[0], labels[1], labels[4]}]
 
     for request in filtered_requests:
         text = request.getText()
         result = classifier(text, candidate_labels=labels, multi_label=True)
-        for i in range(len(skills)):
+        for i in range(len(request.Skills)):
             if (result["scores"][i] >= accuracy):
                 skill = result["labels"][i].split(' ')[-1]
-                skills_count[skill] += 1
+                skills_count[skill] = skills_count.get(skill, 0) + 1
 
     return JSONResponse(content=skills_count)
 
