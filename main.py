@@ -1,4 +1,5 @@
-from fastapi import FastAPI, Request
+from typing import List
+from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from transformers import pipeline
 from sentence_transformers import SentenceTransformer
@@ -18,7 +19,7 @@ labels = ["человек, который ищёт друзей или един�
 
 model = SentenceTransformer('sentence-transformers/distiluse-base-multilingual-cased-v2')
 classifier = pipeline("zero-shot-classification",
-                      model="joeddav/xlm-roberta-large-xnli")
+                      model="MoritzLaurer/mDeBERTa-v3-base-mnli-xnli")
 
 class User(BaseModel):
     Id: str
@@ -48,8 +49,8 @@ class MyRequest(BaseModel):
 
 class RequestBody(BaseModel):
     Request: MyRequest
-    Users: list[User]
-    Requests: list[MyRequest]
+    Users: List[User]
+    Requests: List[MyRequest]
 
 @app.post("/classifier")
 async def classification(request: MyRequest):
@@ -87,7 +88,6 @@ async def predict(request_body: RequestBody):
     user_scores = {} #сходство по профилям (без запросов)
 
     for r in request_body.Requests:
-        user_dict.pop(r.UserId, None)
         
         if check_label(main_label, r.Label): 
             score = cosine_similarity(model.encode(r.getText()), request)
@@ -95,11 +95,12 @@ async def predict(request_body: RequestBody):
                 request_scores[r.UserId] = max(request_scores[r.UserId], score)
             else: request_scores[r.UserId] = score
         elif (main_label != labels[3]): 
-            score = cosine_similarity(model.encode(r.User.getText()), request)
+            score = cosine_similarity(model.encode(user_dict[r.UserId].getText()), request)
             if (r.UserId in user_scores.keys()):
                 user_scores[r.UserId] = max(user_scores[r.UserId], score)
             else:
                 user_scores[r.UserId] = score
+        user_dict.pop(r.UserId, None)
 
     #Проверяются оставшиеся поьзователи без запросов 
     for key in user_dict.keys():
@@ -109,10 +110,13 @@ async def predict(request_body: RequestBody):
     request_scores = dict(sorted(request_scores.items(), key=itemgetter(1), reverse=True))
     user_scores = dict(sorted(user_scores.items(), key=itemgetter(1), reverse=True))
 
+    request_scores = {k: float(v) for k, v in request_scores.items()}
+    user_scores    = {k: float(v) for k, v in user_scores.items()}
+
     return JSONResponse(content = {**request_scores , **user_scores})
 
 
-def count_words(request: list[str]):
+def count_words(request: List[str]):
     terms = []
     # прведение к нижнему регистру
     for s in request:
@@ -165,12 +169,12 @@ def count_words(request: list[str]):
 
 #упорядачивает навыки(хобби/интересы) по популярности среди пользователей (поиск по анкетам)
 @app.post("/statistic/most_popular")
-async def most_popular(request: list[str]):
+async def most_popular(request: List[str]):
     return JSONResponse(content = count_words(request))
 
 class RequestBody1(BaseModel):
-    Skills: list[str]
-    Requests: list[MyRequest]
+    Skills: List[str]
+    Requests: List[MyRequest]
 
 #упорядачивает навыки(хобби/интересы) по востребованности в запросах (с учётом их меток)
 @app.post("/statistic/requests_frequency")
