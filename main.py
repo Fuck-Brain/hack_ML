@@ -4,6 +4,7 @@ from transformers import pipline
 from sentence_transformers import SentenceTransformer
 from pydantic import BaseModel
 import numpy as np
+from operator import itemgetter
 
 app = FastAPI()
 
@@ -31,8 +32,10 @@ class User(BaseModel):
 
 class MyRequest(BaseModel):
     UserId: str
+    User: User
     NameRequest: str
     TextRequest: str
+    Label: str
     
     def getText(self) -> str:
         if (self.NameRequest.endswith('.')):
@@ -62,24 +65,55 @@ def cosine_similary(A, B):
     norm_B = np.linalg.norm(B)
     return dot_product / (norm_A * norm_B)
 
+def check_label(main_label, label):
+    #1:работодатель - работник 
+    #2:продавец - покупатель 
+    #3:работник - работодатель
+    #4:покупатель - продавец
+    return ((main_label == labels[1] and label == labels[3]) or 
+            (main_label == labels[2] and label == labels[4]) or 
+            (main_label == labels[3] and label == labels[1]) or 
+            (main_label == labels[4] and label == labels[2]))   
+
+
 @app.post("/predict")
 async def predict(request_body: RequestBody):
     request = model.encode(request_body.Request.getText())
-    requests_dict = {request.UserId: request for request in request_body.Requests}
-    #пользователи без запросов
-    user_dict = {user.Id: user for user in request_body.Users 
-                 if user.Id not in requests_dict.keys()}
+    main_label = request_body.Request.Label
 
-    request_scores = {
-        "Id": [],
-        "Score": [] } #сходство по запросам (ключ - id пользователя, значение - коэф. схожести)
-    user_scores = {
-        "Id": [],
-        "Score": []
-    } #сходство по профилям (без запросов)
+    #пользователи без запросов (вначале все, в ходе обработки запросов лишние удаляются)
+    user_dict = {user.Id: user for user in request_body.Users}
 
-    for key in requests_dict.keys():
-        request_scores[key] = 
+    request_scores = {} #сходство по запросам ( ключ - коэф. схожести, значение - id пользователя)
+    user_scores = {} #сходство по профилям (без запросов)
+
+    for r in request_body.Requests:
+        user_dict.pop(r.UserId, None)
+        
+        if check_label(main_label, r.Label): 
+            score = cosine_similary(model.encode(r.getText()), request)
+            if (r.UserId in request_scores.keys()):
+                request_scores[r.UserId] = max(request_scores[r.UserId], score)
+            else: request_scores[r.UserId] = score
+        elif (main_label != labels[3]): 
+            score = cosine_similary(model.encode(r.User.getText()), request)
+            if (r.UserId in user_scores.keys()):
+                user_scores[r.UserId] = max(user_scores[r.UserId], score)
+            else:
+                user_scores[r.UserId] = score
+
+    #Проверяются оставшиеся поьзователи без запросов 
+    for key in user_dict.keys():
+        score = cosine_similary(model.encode(user_dict[key].getText()), request)
+        user_scores[key] = score
+
+    request_scores = dict(sorted(request_scores.items(), key=itemgetter(1)))
+    user_scores = dict(sorted(user_scores.items(), key=itemgetter(1)))
+
+    return JSONResponse(content = request_scores | user_scores)
+
+
+
 
 
 
