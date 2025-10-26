@@ -100,8 +100,8 @@ async def predict(request_body: RequestBody):
     user_scores = {} #сходство по профилям (без запросов)
 
     for r in request_body.Requests:
-        if r.UserId not in user_dict:
-            continue  # пропускаем, если такого юзера нет
+        if (r.UserId not in user_dict) or (request_body.Request.UserId == r.UserId):
+            continue  
 
         if check_label(main_label, r.Label): 
             score = cosine_similarity(model.encode(r.getText()), request)
