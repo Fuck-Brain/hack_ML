@@ -64,6 +64,7 @@ class RequestBody(BaseModel):
 
 @app.post("/classifier")
 async def classification(request: MyRequest):
+    print("start classification")
     data = request.getText()
 
     scores = classifier(data, labels)
@@ -88,6 +89,7 @@ def check_label(main_label: str, label: str) -> bool:
 
 @app.post("/predict")
 async def predict(request_body: RequestBody):
+    print("start predict")
     request = model.encode(request_body.Request.getText())
     main_label = request_body.Request.Label
 
@@ -153,6 +155,7 @@ def count_theme(request: List[str]):
 #упорядачивает навыки(хобби/интересы) по популярности среди пользователей (поиск по анкетам)
 @app.post("/statistic/most_popular")
 async def most_popular(request: List[str]):
+    print("start finding most_popular")
     return JSONResponse(content = count_theme(request))
 
 class RequestBody1(BaseModel):
@@ -162,12 +165,13 @@ class RequestBody1(BaseModel):
 #упорядачивает навыки(хобби/интересы) по востребованности в запросах (с учётом их меток)
 @app.post("/statistic/requests_frequency")
 async def requests_frequency(request: RequestBody1):
+    print("start finding frequency in requests")
     accuracy = 0.35
 
     filtered_requests = [req for req in request.Requests 
                          if req.Label in {labels[0], labels[1], labels[4]}]
     
-    print(len(filtered_requests))
+    
     
     texts = [request.getText() for request in filtered_requests]
     
